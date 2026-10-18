@@ -1,3 +1,4 @@
+import pool from "./db.js";
 import express from "express";
 import cors from "cors";
 const app=express();
@@ -18,42 +19,93 @@ app.get("/",(req,res)=>{
 });
 
 // Receive a new log
-app.post("/logs",(req,res)=>{
-     const log=req.body;
-     logs.push(log);
-     console.log("New log received:",log);
-     res.status(201).json({
-          message:"Log received successfully",
-          log:log
 
-     });
+app.post("/logs", async (req, res) => {
+    const { service, level, message } = req.body;
 
+    // Validate required fields
+    if (
+        typeof service !== "string" || !service.trim() ||
+        typeof level !== "string" || !level.trim() ||
+        typeof message !== "string" || !message.trim()
+    ) {
+        return res.status(400).json({
+            error: "service, level, and message are required"
+        });
+    }
 
+    // Prepare the log
+    const log = {
+        timestamp: new Date().toISOString(),
+        service: service.trim(),
+        level: level.trim().toUpperCase(),
+        message: message.trim()
+    };
 
+    try {
+        // Save the log in PostgreSQL
+        const result = await pool.query(
+            `INSERT INTO logs (timestamp, service, level, message)
+             VALUES ($1, $2, $3, $4)
+             RETURNING *`,
+            [log.timestamp, log.service, log.level, log.message]
+        );
+
+        // Return the saved database record
+        res.status(201).json({
+            message: "Log saved successfully",
+            log: result.rows[0]
+        });
+    } catch (error) {
+        console.error("Error saving log:", error.message);
+
+        res.status(500).json({
+            error: "Failed to save log"
+        });
+    }
 });
+
+
+
+
+
+
 
 // Get all logs or filter them
-app.get("/logs", (req, res) => {
+
+app.get("/logs", async (req, res) => {
     const { level, service } = req.query;
 
-    let filteredLogs = logs;
+    let query = "SELECT * FROM logs WHERE 1=1";
+    const values = [];
 
-    // Filter logs by level
+    // Filter by log level
     if (level) {
-        filteredLogs = filteredLogs.filter(
-            log => log.level === level.toUpperCase()
-        );
+        values.push(level.toUpperCase());
+        query += ` AND level = $${values.length}`;
     }
 
-    // Filter logs by service
+    // Filter by service name
     if (service) {
-        filteredLogs = filteredLogs.filter(
-            log => log.service.toLowerCase() === service.toLowerCase()
-        );
+        values.push(service);
+        query += ` AND LOWER(service) = LOWER($${values.length})`;
     }
 
-    res.json(filteredLogs);
+    // Show newest logs first
+    query += " ORDER BY timestamp DESC";
+
+    try {
+        const result = await pool.query(query, values);
+        res.json(result.rows);
+    } catch (error) {
+        console.error("Error retrieving logs:", error.message);
+
+        res.status(500).json({
+            error: "Failed to retrieve logs"
+        });
+    }
 });
+
 
 
 
